@@ -23,7 +23,7 @@ struct ContentView: View {
             footer
         }
         .padding()
-        .frame(width: state.proModeExpanded ? 620 : 360)
+        .frame(width: state.proModeExpanded ? 480 : 360)
         .animation(.smooth(duration: 0.25), value: state.proModeExpanded)
         .animation(.smooth(duration: 0.2), value: state.phase)
     }

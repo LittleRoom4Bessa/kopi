@@ -8,26 +8,23 @@ struct ProModeView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        // Wide, flat layout: destinations side-by-side, settings in one row —
-        // everything operable without scrolling.
-        VStack(alignment: .leading, spacing: 12) {
-            destinationsRow
+        // Compact vertical stack — everything fits without scrolling.
+        VStack(alignment: .leading, spacing: 10) {
+            destinationsColumn
             verificationSection
             rulesSection
             actionSection
         }
     }
 
-    // MARK: Destinations (side-by-side)
+    // MARK: Destinations (stacked)
 
-    private var destinationsRow: some View {
+    private var destinationsColumn: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("3 copies · 2 media · 1 remote")
                 .font(.caption).foregroundStyle(.secondary)
-            HStack(alignment: .top, spacing: 8) {
-                ForEach(0..<ProSettings.destinationCount, id: \.self) { slot in
-                    DestinationSlotCard(slot: slot)
-                }
+            ForEach(0..<ProSettings.destinationCount, id: \.self) { slot in
+                DestinationSlotCard(slot: slot)
             }
         }
     }
