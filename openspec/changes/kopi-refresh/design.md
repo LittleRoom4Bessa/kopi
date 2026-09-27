@@ -64,10 +64,12 @@ Known blind spots, documented in UI copy: RAID volumes present as one BSD device
 ### D6: Strict mode is a display-level gate, not engine behavior
 Strict mode is one boolean in pro settings. The engine is identical in both modes; strict only changes whether the Start button is enabled when warn-level violations exist. Keeps the copy pipeline free of policy and keeps warn/strict trivially testable at the UI state layer.
 
-### D7: Pro UI is a detached panel; popover stays the primary surface
-Casual mode lives in the `MenuBarExtra` popover, close to v1's shape plus disk cards. Pro mode opens a separate `NSPanel`-style window (non-activating, no dock icon — standard menu-bar-app pattern) hosting: 3 destination pickers with disk cards, hash picker, strict toggle, rule badges, per-destination progress and verification results. The popover shows condensed aggregate progress while a pro session runs.
+### D7: Pro mode expands the popover in place — no separate window
+The popover is the only surface. A persistent pro-mode toggle widens the popover (360 → 620 pt) with an animated transition, revealing 3 destination disk cards, the hash picker, the strict toggle, rule badges, and per-destination progress/results. Collapsing mid-session never interrupts the copy — the collapsed popover keeps showing condensed per-destination progress.
 
-Alternative considered: everything in the popover. Rejected — 3 disk cards + rules + progress exceeds comfortable popover bounds; popovers are glanceable surfaces, this is a control panel.
+Alternative considered: a detached panel window (implemented briefly, then rejected by the user — menu-bar identity means staying in one surface; an expandable popover keeps pro mode discoverable without window management).
+
+Implementation note: pro content is a real `View` type (`ProModeView`) so the popover's casual subtree and pro subtree are separate invalidation boundaries; the width change animates via `.animation(_:value:)` on the expanded flag.
 
 ### D8: Per-destination manifests and incremental skip, unchanged semantics per destination
 Each destination gets its own per-session manifest (D6 in v1, extended with algorithm-appropriate extension) and its own incremental skip (v1 D7: re-hash existing destination file, skip only on verified match). No cross-destination state — destinations are fully independent, so any subset can be re-run or fail without affecting others.

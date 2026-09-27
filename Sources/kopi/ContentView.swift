@@ -3,13 +3,63 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppState.self) private var state
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            pathPickers
-            Divider()
+            sourceCard
 
+            if state.proModeExpanded {
+                // Pro mode expands the popover in place.
+                ProModeView()
+                    .transition(.opacity)
+            } else {
+                casualDestinationCard
+                Divider()
+                casualSessionSection
+                    .transition(.opacity)
+            }
+
+            Divider()
+            footer
+        }
+        .padding()
+        .frame(width: state.proModeExpanded ? 620 : 360)
+        .animation(.smooth(duration: 0.25), value: state.proModeExpanded)
+        .animation(.smooth(duration: 0.2), value: state.phase)
+    }
+
+    // MARK: Disk cards
+
+    private var sourceCard: some View {
+        DiskCardView(
+            title: "Source (SD card)",
+            path: state.sourcePath,
+            available: state.sourceAvailable,
+            descriptor: state.sourceDisk,
+            probe: state.probeStates["source"] ?? .idle,
+            probeLabel: (state.probeStates["source"] ?? .idle).doneLabel(isSource: true),
+            onChoose: state.pickSource,
+            onProbe: state.probeSource
+        )
+    }
+
+    private var casualDestinationCard: some View {
+        DiskCardView(
+            title: "Destination",
+            path: state.destinationPath,
+            available: state.destinationAvailable,
+            descriptor: state.destinationDisk,
+            probe: state.probeStates["destination"] ?? .idle,
+            probeLabel: (state.probeStates["destination"] ?? .idle).doneLabel(isSource: false),
+            onChoose: state.pickDestination,
+            onProbe: state.probeDestination
+        )
+    }
+
+    // MARK: Casual session section
+
+    private var casualSessionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
             switch state.phase {
             case .idle:
                 idleSection
@@ -23,43 +73,25 @@ struct ContentView: View {
                                   onReset: state.reset)
                     .transition(.opacity)
             }
-
-            Divider()
-            HStack {
-                Spacer()
-                Button("Quit kopi") { NSApplication.shared.terminate(nil) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-            }
         }
-        .padding()
-        .animation(.smooth(duration: 0.2), value: state.phase)
     }
 
-    // MARK: Path pickers
+    // MARK: Footer
 
-    private var pathPickers: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            DiskCardView(
-                title: "Source (SD card)",
-                path: state.sourcePath,
-                available: state.sourceAvailable,
-                descriptor: state.sourceDisk,
-                probe: state.probeStates["source"] ?? .idle,
-                probeLabel: (state.probeStates["source"] ?? .idle).doneLabel(isSource: true),
-                onChoose: state.pickSource,
-                onProbe: state.probeSource
-            )
-            DiskCardView(
-                title: "Destination",
-                path: state.destinationPath,
-                available: state.destinationAvailable,
-                descriptor: state.destinationDisk,
-                probe: state.probeStates["destination"] ?? .idle,
-                probeLabel: (state.probeStates["destination"] ?? .idle).doneLabel(isSource: false),
-                onChoose: state.pickDestination,
-                onProbe: state.probeDestination
-            )
+    private var footer: some View {
+        HStack {
+            Button(state.proModeExpanded ? "Hide Pro Mode" : "Pro Mode…") {
+                state.proModeExpanded.toggle()
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityHint(state.proModeExpanded
+                               ? "Collapse back to single-destination mode"
+                               : "Expand to 3-2-1 backup with three destinations")
+            Spacer()
+            Button("Quit kopi") { NSApplication.shared.terminate(nil) }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -74,16 +106,10 @@ struct ContentView: View {
                 Text("Select source and destination to begin.")
                     .foregroundStyle(.secondary)
             }
-            HStack {
-                Button("Start") { state.start() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!state.canStart)
-                    .accessibilityHint("Copies and verifies all files to the destination")
-                Button("Pro Mode…") { openWindow(id: "pro") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .accessibilityHint("Opens the 3-2-1 backup panel with three destinations")
-            }
+            Button("Start") { state.start() }
+                .buttonStyle(.borderedProminent)
+                .disabled(!state.canStart)
+                .accessibilityHint("Copies and verifies all files to the destination")
         }
     }
 }

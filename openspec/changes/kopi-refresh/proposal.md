@@ -13,7 +13,7 @@ kopi v1 proved the core loop — verified SD-card ingest without pro-priced DIT 
   - **Strict mode** (opt-in toggle, default off): warnings above become start-blocking violations.
   - "Remote" means a mounted network volume (SMB/NFS) only — no cloud APIs in this change.
 - **Fan-out verified copy**: the copy engine reads the source once and streams to all destinations concurrently with per-destination queues (a stalled NAS must not stall a local SSD), keeping per-destination verification, manifests, and incremental skip.
-- **Menu bar stays primary**: casual mode remains a popover close to v1's shape; pro mode opens a detached panel from the menu bar.
+- **Menu bar stays primary**: casual mode remains a popover close to v1's shape; pro mode expands the same popover in place (no separate window).
 
 ## Capabilities
 
@@ -29,7 +29,7 @@ kopi v1 proved the core loop — verified SD-card ingest without pro-priced DIT 
 
 ## Impact
 
-- **Code**: `KopiCore` grows disk introspection (DiskArbitration/IOKit), a benchmark probe, and a fan-out pipeline replacing the serial single-destination loop in `CopyEngine`; `kopi` app target gains disk-card views, a detached pro panel window, and pro settings.
+- **Code**: `KopiCore` grows disk introspection (DiskArbitration/IOKit), a benchmark probe, and a fan-out pipeline replacing the serial single-destination loop in `CopyEngine`; `kopi` app target gains disk-card views, an expandable pro mode section in the popover, and pro settings.
 - **Dependencies**: first non-Apple dependency — **xxhash** (xxHash64) via SwiftPM.
 - **Systems touched**: filesystem as before, plus DiskArbitration/IOKit queries and small benchmark temp files on tested volumes (cleaned up after probe). No cloud/network API surface; network destinations are plain mounted volumes.
 - **Sequencing**: `add-sd-backup-tool` (v1) should complete its final manual e2e task and archive before this change is implemented, so delta specs land on archived base specs.

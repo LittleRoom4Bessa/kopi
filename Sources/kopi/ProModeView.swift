@@ -2,9 +2,9 @@ import KopiCore
 import SwiftUI
 
 /// Pro mode: 3-2-1 ingest — 3 destination folders, hash choice, media rules.
-/// Lives in a `Window` scene (design D7); closing it never stops a running
-/// session — the popover keeps showing condensed progress.
-struct ProPanelView: View {
+/// Expands the popover in place (no separate window). Collapsing mid-session
+/// never stops it — the collapsed popover keeps showing condensed progress.
+struct ProModeView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
@@ -12,8 +12,6 @@ struct ProPanelView: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                SourceSummarySection()
-                Divider()
                 destinationsSection
                 Divider()
                 verificationSection
@@ -22,9 +20,8 @@ struct ProPanelView: View {
                 Divider()
                 actionSection
             }
-            .padding()
         }
-        .frame(minWidth: 560, minHeight: 620)
+        .frame(maxHeight: 520)
     }
 
     // MARK: Destinations
@@ -135,37 +132,6 @@ struct ProPanelView: View {
     }
 }
 
-/// Source summary shown at the top of the pro panel.
-private struct SourceSummarySection: View {
-    @Environment(AppState.self) private var state
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let source = state.sourceDisk {
-                HStack(spacing: 6) {
-                    Image(systemName: "sdcard")
-                    Text(source.volumeName ?? URL(fileURLWithPath: state.sourcePath).lastPathComponent)
-                        .font(.headline)
-                    Text("·")
-                    Text("\(source.type.displayName) · \(source.bus.displayName)")
-                        .foregroundStyle(.secondary)
-                }
-                if let total = source.totalBytes, let free = source.freeBytes {
-                    Text("\(format(total - free)) used of \(format(total))")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            } else {
-                Label("Pick a source in the menu bar popover first.", systemImage: "sdcard")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func format(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-    }
-}
-
 /// One pro destination slot: disk card + chooser + speed probe.
 private struct DestinationSlotCard: View {
     @Environment(AppState.self) private var state
@@ -185,7 +151,7 @@ private struct DestinationSlotCard: View {
     }
 }
 
-/// One line of per-destination results (pro panel).
+/// One line of per-destination results (pro mode).
 struct DestinationResultRow: View {
     let report: DestinationReport
 

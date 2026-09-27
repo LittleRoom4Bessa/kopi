@@ -30,13 +30,13 @@ The system SHALL show per-file and overall copy progress (current filename, file
 
 ## ADDED Requirements
 
-### Requirement: Pro mode entry and detached panel
-The system SHALL provide an entry point in the popover to open pro mode. Pro mode SHALL be presented in a detached panel window owned by the menu bar app, without adding a Dock icon. Closing the panel SHALL NOT interrupt a running session; the popover continues to reflect session state.
+### Requirement: Pro mode expansion
+The system SHALL provide a pro mode toggle in the popover that expands the popover in place to reveal pro configuration (3 destination disk cards, hash picker, strict toggle, rule badges, per-destination progress). The expanded/collapsed state SHALL persist across launches. Collapsing pro mode SHALL NOT interrupt a running session; the collapsed popover continues to show condensed progress.
 
-#### Scenario: Open pro mode
-- **WHEN** the user activates the pro mode entry point
-- **THEN** a detached panel opens with pro configuration and no Dock icon appears
+#### Scenario: Expand pro mode
+- **WHEN** the user activates the pro mode toggle
+- **THEN** the popover widens and reveals the 3 destination pickers and pro settings, without opening any new window
 
-#### Scenario: Panel closed mid-session
-- **WHEN** the user closes the pro panel while a session runs
-- **THEN** the session continues and the popover still shows condensed progress and completion state
+#### Scenario: Collapse mid-session
+- **WHEN** the user collapses pro mode while a session runs
+- **THEN** the session continues and the collapsed popover still shows condensed progress and completion state

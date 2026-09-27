@@ -24,7 +24,10 @@ final class AppState {
     var destinationPath: String {
         didSet { UserDefaults.standard.set(destinationPath, forKey: "destinationPath") }
     }
-    /// Pro mode: 3 destination folders, hash choice, strict toggle (pro-mode spec).
+    /// Pro mode expands the popover in place (no separate window).
+    var proModeExpanded: Bool {
+        didSet { UserDefaults.standard.set(proModeExpanded, forKey: "proModeExpanded") }
+    }
     var proSettings: ProSettings {
         didSet {
             if let data = try? JSONEncoder().encode(proSettings) {
@@ -79,6 +82,7 @@ final class AppState {
         } else {
             proSettings = ProSettings()
         }
+        proModeExpanded = UserDefaults.standard.bool(forKey: "proModeExpanded")
         requestNotificationAuthorization()
         refreshPlan()
     }
