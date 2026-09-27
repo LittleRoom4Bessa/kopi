@@ -221,6 +221,8 @@ private struct ResultSectionView: View {
     private var summaryLine: String {
         guard let dest = report.primaryDestination else { return "" }
         var parts = ["\(dest.copied.count) copied"]
+        let replaced = dest.copied.filter(\.overwroteExisting).count
+        if replaced > 0 { parts.append("\(replaced) replaced") }
         if !dest.verifiedSkipped.isEmpty { parts.append("\(dest.verifiedSkipped.count) already verified") }
         if !dest.failed.isEmpty { parts.append("\(dest.failed.count) failed") }
         if let manifest = dest.manifestURL { parts.append("manifest: \(manifest.lastPathComponent)") }

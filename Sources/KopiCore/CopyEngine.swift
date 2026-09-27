@@ -133,44 +133,65 @@ public final class CopyEngine: @unchecked Sendable {
         stateLock.lock()
         let live = dests.filter(\.live)
         let candidates = live.filter { existingFileSize(entry, root: $0.report.root) == entry.size }
-        var needsCopy = live.filter { dest in !candidates.contains { $0 === dest } }
+        let needsCopy = live.filter { dest in !candidates.contains { $0 === dest } }
         stateLock.unlock()
         guard !live.isEmpty else { return nil }
 
-        // Phase 1: skip analysis. Candidates need the source hash to compare.
-        if !candidates.isEmpty {
-            do {
-                let sourceHash = try transport.hashFile(at: entry.sourceURL, algorithm: plan.algorithm)
-                for dest in candidates {
-                    let existing = entry.destinationURL(under: dest.report.root)
-                    let destHash = try? transport.hashFile(at: existing, algorithm: plan.algorithm)
-                    stateLock.lock()
-                    if destHash == sourceHash {
-                        dest.report.verifiedSkipped.append(VerifiedSkippedFile(
-                            relativePath: entry.relativePath, hash: sourceHash, bytes: entry.size))
-                    } else {
-                        // Divergent or unreadable existing file: re-copy.
-                        needsCopy.append(dest)
-                    }
-                    stateLock.unlock()
-                }
-            } catch {
-                // Source unreadable: file fails on every live destination.
-                stateLock.lock()
-                for dest in live {
-                    dest.report.failed.append(FailedFile(
-                        relativePath: entry.relativePath,
-                        reason: .readError(error.localizedDescription)))
-                }
-                stateLock.unlock()
-                return fileManager.fileExists(atPath: plan.sourceRoot.path) ? nil : .sourceUnavailable
-            }
+        // Fan-out reads the source once; skip candidates are verified against
+        // THAT hash afterwards, so a mixed session still reads the file once
+        // (verified-copy spec: read-once fan-out).
+        var sourceHash: String?
+        if !needsCopy.isEmpty {
+            let (abort, hash) = fanOutCopy(entry, dests: needsCopy, plan: plan)
+            if let abort { return abort }
+            guard let hash else { return nil } // source-level failure already recorded
+            sourceHash = hash
         }
 
-        guard !needsCopy.isEmpty else { return nil }
+        for dest in candidates {
+            if sourceHash == nil {
+                // Every live destination is a candidate: hash the source once.
+                do {
+                    sourceHash = try transport.hashFile(at: entry.sourceURL, algorithm: plan.algorithm)
+                } catch {
+                    stateLock.lock()
+                    for d in candidates {
+                        d.report.failed.append(FailedFile(
+                            relativePath: entry.relativePath,
+                            reason: .readError(error.localizedDescription)))
+                    }
+                    stateLock.unlock()
+                    return fileManager.fileExists(atPath: plan.sourceRoot.path) ? nil : .sourceUnavailable
+                }
+            }
+            guard let hash = sourceHash else { return nil }
 
-        // Phase 2: read the source once, fan out to all needing destinations.
-        return fanOutCopy(entry, dests: needsCopy, plan: plan)
+            let existing = entry.destinationURL(under: dest.report.root)
+            let destHash = try? transport.hashFile(at: existing, algorithm: plan.algorithm)
+
+            if destHash == hash {
+                stateLock.lock()
+                dest.report.verifiedSkipped.append(VerifiedSkippedFile(
+                    relativePath: entry.relativePath, hash: hash, bytes: entry.size))
+                stateLock.unlock()
+            } else {
+                // Divergent or unreadable existing file: serial verified re-copy,
+                // surfaced as an overwrite (verified-copy spec).
+                let tmpURL = tmpURLFor(entry, root: dest.report.root)
+                if let rehash = retryCopyIO(entry: entry, dest: dest, tmpURL: tmpURL, plan: plan) {
+                    stateLock.lock()
+                    commitRenameLocked(entry: entry, dest: dest, tmpURL: tmpURL,
+                                       hash: rehash, overwroteExisting: true, plan: plan)
+                    stateLock.unlock()
+                } else {
+                    stateLock.lock()
+                    dest.report.failed.append(FailedFile(
+                        relativePath: entry.relativePath, reason: .hashMismatch))
+                    stateLock.unlock()
+                }
+            }
+        }
+        return nil
     }
 
     private struct FanOutTarget {
@@ -182,8 +203,9 @@ public final class CopyEngine: @unchecked Sendable {
 
     /// Streams the source file once, pushing chunks to every destination's
     /// bounded queue. Writer threads verify+rename autonomously behind the
-    /// hash barrier. Returns a session-level abort reason if the source died.
-    private func fanOutCopy(_ entry: CopyPlanEntry, dests: [DestinationState], plan: CopyPlan) -> AbortReason? {
+    /// hash barrier. Returns the source-stream hash, or a session-level abort
+    /// reason if the source died (nil hash on source-level failure).
+    private func fanOutCopy(_ entry: CopyPlanEntry, dests: [DestinationState], plan: CopyPlan) -> (AbortReason?, String?) {
         // Open destination streams; a failure here is handled per destination.
         var targets: [FanOutTarget] = []
         for dest in dests {
@@ -203,7 +225,7 @@ public final class CopyEngine: @unchecked Sendable {
                 stateLock.unlock()
             }
         }
-        guard !targets.isEmpty else { return nil }
+        guard !targets.isEmpty else { return (nil, nil) }
 
         let barrier = HashBarrier()
 
@@ -233,17 +255,21 @@ public final class CopyEngine: @unchecked Sendable {
                     liveTargets.removeAll { $0.queue === target.queue }
                 }
             }
-            barrier.setHash(hasher.finalize())
+            let hash = hasher.finalize()
+            barrier.setHash(hash)
             for target in liveTargets { target.queue.close() }
-            return nil
+            return (nil, hash)
         } catch {
             barrier.setFailure(error)
             for target in targets { target.queue.close() }
-            return fileManager.fileExists(atPath: plan.sourceRoot.path) ? nil : .sourceUnavailable
+            return (fileManager.fileExists(atPath: plan.sourceRoot.path) ? nil : .sourceUnavailable, nil)
         }
     }
 
     /// One destination's write-verify-rename lifecycle for one file.
+    /// All storage I/O (write, verify re-read, retry) happens WITHOUT stateLock;
+    /// the lock only guards quick report mutations and renames (design D3: a
+    /// slow destination must not serialize other destinations' verification).
     private func writerMain(
         target: FanOutTarget, entry: CopyPlanEntry, barrier: HashBarrier, plan: CopyPlan
     ) {
@@ -284,53 +310,67 @@ public final class CopyEngine: @unchecked Sendable {
             return
         }
 
-        stateLock.lock()
-        verifyAndRename(entry: entry, dest: dest, tmpURL: target.tmpURL,
-                        sourceHash: sourceHash, plan: plan)
-        stateLock.unlock()
-    }
+        // Verification re-read from storage, page cache bypassed — no lock held.
+        let destHash = try? transport.hashFile(at: target.tmpURL, algorithm: plan.algorithm)
 
-    /// Destination re-read → compare → rename-on-match. Retries once serially
-    /// on mismatch (design D4 carried into fan-out).
-    /// Call with stateLock held.
-    private func verifyAndRename(
-        entry: CopyPlanEntry, dest: DestinationState, tmpURL: URL, sourceHash: String, plan: CopyPlan
-    ) {
-        let finalURL = entry.destinationURL(under: dest.report.root)
-        do {
-            let destHash = try transport.hashFile(at: tmpURL, algorithm: plan.algorithm)
-            if destHash == sourceHash {
-                if fileManager.fileExists(atPath: finalURL.path) {
-                    try fileManager.removeItem(at: finalURL)
-                }
-                try fileManager.moveItem(at: tmpURL, to: finalURL)
-                dest.tmpURL = nil
-                dest.report.copied.append(CopiedFile(
-                    relativePath: entry.relativePath, hash: sourceHash, bytes: entry.size))
-                return
-            }
-            throw FileFailure(reason: .hashMismatch)
-        } catch {
-            if let failure = error as? FileFailure, failure.reason == .hashMismatch {
-                // Serial single-destination retry (one extra source read).
-                if retryCopy(entry: entry, dest: dest, tmpURL: tmpURL, plan: plan) {
-                    dest.tmpURL = nil
-                    return
-                }
-                dest.tmpURL = nil // tmp kept on disk for inspection; orphan cleanup covers it
-                dest.report.failed.append(FailedFile(
-                    relativePath: entry.relativePath, reason: .hashMismatch))
-            } else {
-                handleDestinationError(error, dest: dest, entry: entry, tmpURL: tmpURL)
-            }
+        stateLock.lock()
+        if let destHash, destHash == sourceHash {
+            commitRenameLocked(entry: entry, dest: dest, tmpURL: target.tmpURL,
+                               hash: sourceHash, overwroteExisting: false, plan: plan)
+            stateLock.unlock()
+            return
+        }
+        if destHash == nil {
+            handleDestinationError(CocoaError(.fileReadUnknown),
+                                   dest: dest, entry: entry, tmpURL: target.tmpURL)
+            stateLock.unlock()
+            return
+        }
+        stateLock.unlock()
+
+        // Hash mismatch: one serial retry, I/O outside the lock.
+        if let rehash = retryCopyIO(entry: entry, dest: dest, tmpURL: target.tmpURL, plan: plan) {
+            stateLock.lock()
+            commitRenameLocked(entry: entry, dest: dest, tmpURL: target.tmpURL,
+                               hash: rehash, overwroteExisting: false, plan: plan)
+            stateLock.unlock()
+        } else {
+            stateLock.lock()
+            dest.tmpURL = nil // tmp kept on disk for inspection; orphan cleanup covers it
+            dest.report.failed.append(FailedFile(
+                relativePath: entry.relativePath, reason: .hashMismatch))
+            stateLock.unlock()
         }
     }
 
-    /// One-shot serial re-copy of a file to a single destination. Returns true
-    /// when verified and renamed. Call with stateLock held.
-    private func retryCopy(
+    /// Rename-on-match plus report bookkeeping.
+    /// Call with stateLock held; only quick syscalls (rename) run under it.
+    private func commitRenameLocked(
+        entry: CopyPlanEntry, dest: DestinationState, tmpURL: URL,
+        hash: String, overwroteExisting: Bool, plan: CopyPlan
+    ) {
+        let finalURL = entry.destinationURL(under: dest.report.root)
+        do {
+            if fileManager.fileExists(atPath: finalURL.path) {
+                try fileManager.removeItem(at: finalURL)
+            }
+            try fileManager.moveItem(at: tmpURL, to: finalURL)
+        } catch {
+            handleDestinationError(error, dest: dest, entry: entry, tmpURL: tmpURL)
+            return
+        }
+        dest.tmpURL = nil
+        dest.report.copied.append(CopiedFile(
+            relativePath: entry.relativePath, hash: hash, bytes: entry.size,
+            overwroteExisting: overwroteExisting))
+    }
+
+    /// One-shot serial verified copy of a file to a single destination's tmp.
+    /// Returns the verified hash on success, nil on any failure.
+    /// Call WITHOUT stateLock — this is pure storage I/O.
+    private func retryCopyIO(
         entry: CopyPlanEntry, dest: DestinationState, tmpURL: URL, plan: CopyPlan
-    ) -> Bool {
+    ) -> String? {
         do {
             let source = try transport.openSource(at: entry.sourceURL)
             let stream = try transport.openDestination(at: tmpURL)
@@ -343,18 +383,12 @@ public final class CopyEngine: @unchecked Sendable {
             }
             try stream.finish()
             let sourceHash = hasher.finalize()
-            let destHash = try transport.hashFile(at: tmpURL, algorithm: plan.algorithm)
-            guard sourceHash == destHash else { return false }
-            let finalURL = entry.destinationURL(under: dest.report.root)
-            if fileManager.fileExists(atPath: finalURL.path) {
-                try fileManager.removeItem(at: finalURL)
+            guard try transport.hashFile(at: tmpURL, algorithm: plan.algorithm) == sourceHash else {
+                return nil
             }
-            try fileManager.moveItem(at: tmpURL, to: finalURL)
-            dest.report.copied.append(CopiedFile(
-                relativePath: entry.relativePath, hash: sourceHash, bytes: entry.size))
-            return true
+            return sourceHash
         } catch {
-            return false
+            return nil
         }
     }
 
@@ -459,8 +493,6 @@ public final class CopyEngine: @unchecked Sendable {
             try? fileManager.removeItem(at: url)
         }
     }
-
-    private struct FileFailure: Error { let reason: FileFailureReason }
 }
 
 /// Bounded blocking queue feeding one destination writer thread (design D3).

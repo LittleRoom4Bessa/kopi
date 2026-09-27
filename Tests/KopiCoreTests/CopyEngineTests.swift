@@ -473,7 +473,8 @@ struct CopyEngineTests {
         try f.writeDestination("a.jpg", "alpha") // A already has a.jpg
         // B is empty
 
-        let report = try runSession(f, destinations: [f.destination, b])
+        let counter = CountingTransport()
+        let report = try runSession(f, destinations: [f.destination, b], transport: counter)
 
         let destA = destReport(report, f.destination)
         let destB = destReport(report, b)
@@ -482,6 +483,28 @@ struct CopyEngineTests {
         #expect(destB.copied.count == 2)
         #expect(destB.verifiedSkipped.isEmpty)
         #expect(report.succeeded)
+        // Read-once fan-out (verified-copy spec): each file is read from the
+        // source exactly once even in a mixed skip/copy session.
+        #expect(counter.sourceOpens == 2) // 2 files × 1 read
+    }
+
+    // Spec: overwrite is surfaced — divergent existing file re-copied and flagged
+    @Test func divergentRecopyIsFlaggedAsOverwrite() throws {
+        let f = try Fixture()
+        defer { f.tearDown() }
+        try f.writeSource("a.jpg", "alpha")
+        try f.writeSource("b.jpg", "bravo")
+        try f.writeDestination("a.jpg", "XXXXX") // same size, different bytes
+
+        let report = try runSession(f)
+
+        let dest = try #require(report.primaryDestination)
+        #expect(report.succeeded)
+        #expect(dest.copied.count == 2)
+        let overwritten = dest.copied.filter(\.overwroteExisting).map(\.relativePath)
+        #expect(overwritten == ["a.jpg"])
+        #expect(report.totalOverwritten == 1)
+        #expect(try f.readDestination("a.jpg") == "alpha")
     }
 
     // Spec: destination failure isolation — full NAS fails alone, others complete

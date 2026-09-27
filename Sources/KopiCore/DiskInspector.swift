@@ -34,9 +34,9 @@ public enum DiskInspector {
         if isNetworkFS {
             raw.isNetwork = true
             raw.mediaIdentity = .network(mountFrom)
-            // DiskArbitration may still know the volume name.
-            if raw.volumeName == nil, let desc = diskDescription(bsdName: nil, path: path) {
-                raw.volumeName = desc["DAVolumeName"] as? String
+            // Fall back to DiskArbitration for the volume name.
+            if raw.volumeName == nil {
+                raw.volumeName = networkVolumeName(path: path)
             }
             return raw
         }
@@ -69,16 +69,19 @@ public enum DiskInspector {
         return raw
     }
 
-    private static func diskDescription(bsdName: String?, path: URL) -> [String: Any]? {
-        guard let session = DASessionCreate(kCFAllocatorDefault) else { return nil }
-        let disk: DADisk?
-        if let bsdName {
-            disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, bsdName)
-        } else {
-            disk = nil
-        }
-        guard let disk else { return nil }
+    private static func diskDescription(bsdName: String, path: URL) -> [String: Any]? {
+        guard let session = DASessionCreate(kCFAllocatorDefault),
+              let disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, bsdName)
+        else { return nil }
         return DADiskCopyDescription(disk) as? [String: Any]
+    }
+
+    private static func networkVolumeName(path: URL) -> String? {
+        guard let session = DASessionCreate(kCFAllocatorDefault),
+              let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, path as CFURL),
+              let desc = DADiskCopyDescription(disk) as? [String: Any]
+        else { return nil }
+        return desc["DAVolumeName"] as? String
     }
 
     private static func tupleToString<T>(_ value: T) -> String {

@@ -75,6 +75,11 @@ struct ProModeView: View {
         VStack(alignment: .leading, spacing: 8) {
             switch state.phase {
             case .idle:
+                // Pre-copy summary (menu-bar-ui spec), source scan already done.
+                if let scan = state.sourceScan {
+                    Text("\(scan.fileCount) files · \(ByteCountFormatter.string(fromByteCount: scan.totalBytes, countStyle: .file))")
+                        .font(.headline)
+                }
                 Button("Start 3-2-1 Backup") { state.startPro() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!state.canStartPro)
@@ -108,14 +113,14 @@ struct ProModeView: View {
                     DestinationResultRow(report: dest)
                 }
                 if report.succeeded {
-                    Label("All destinations verified — safe to eject the card.",
+                    Label("All destinations verified (\(report.algorithm.displayName)) — safe to eject the card.",
                           systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 } else {
-                    Label("Not fully verified — do NOT format the card.",
+                    Label("Not fully verified (\(report.algorithm.displayName)) — do NOT format the card.",
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
-                    if let abort = report.abortReason {
+                    if let abort = report.firstAbortReason {
                         Text(abort.userMessage).font(.callout).foregroundStyle(.red)
                     }
                 }
@@ -144,22 +149,40 @@ private struct DestinationSlotCard: View {
     }
 }
 
-/// One line of per-destination results (pro mode).
+/// One destination's outcome: counts (even when stopped early), stop reason,
+/// and failed files with reasons (session-report spec).
 struct DestinationResultRow: View {
     let report: DestinationReport
 
     var body: some View {
-        HStack {
-            Text(report.root.lastPathComponent).font(.caption).lineLimit(1)
-            Spacer()
-            if let abort = report.abortReason {
-                Text(abort.userMessage).font(.caption).foregroundStyle(.red)
-            } else {
-                Text("\(report.copied.count) copied · \(report.verifiedSkipped.count) verified · \(report.failed.count) failed")
-                    .font(.caption)
-                    .foregroundStyle(report.failed.isEmpty ? Color.secondary : Color.orange)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(report.root.lastPathComponent).font(.caption).lineLimit(1)
+                Spacer()
+                if let abort = report.abortReason {
+                    Text("\(report.copied.count) done · \(abort.userMessage)")
+                        .font(.caption).foregroundStyle(.red)
+                } else {
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(report.failed.isEmpty ? Color.secondary : Color.orange)
+                }
+            }
+            ForEach(report.failed, id: \.relativePath) { failure in
+                Text("✗ \(failure.relativePath) — \(failure.reason.userMessage)")
+                    .font(.caption2).foregroundStyle(.red)
+                    .lineLimit(1).truncationMode(.middle)
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var summary: String {
+        var parts = ["\(report.copied.count) copied"]
+        let replaced = report.copied.filter(\.overwroteExisting).count
+        if replaced > 0 { parts.append("\(replaced) replaced") }
+        if !report.verifiedSkipped.isEmpty { parts.append("\(report.verifiedSkipped.count) verified") }
+        if !report.failed.isEmpty { parts.append("\(report.failed.count) failed") }
+        return parts.joined(separator: " · ")
     }
 }

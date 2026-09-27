@@ -40,6 +40,8 @@ final class AppState {
     // MARK: Session state
 
     var plan: CopyPlan?
+    /// Source-only scan, available without a destination (pre-copy summary).
+    var sourceScan: SourceScan?
     var phase: SessionPhase = .idle
     var progress: CopyProgress?
 
@@ -112,13 +114,22 @@ final class AppState {
 
     // MARK: Plan + session
 
-    /// Rebuilds the pre-copy summary. Must be cheap enough to call on every change.
+    /// Rebuilds the source scan and pre-copy summary. Must be cheap enough to
+    /// call on every change.
     func refreshPlan() {
-        if sourceAvailable, destinationAvailable {
+        if sourceAvailable {
             let source = URL(fileURLWithPath: sourcePath)
-            let destination = URL(fileURLWithPath: destinationPath)
-            plan = try? SourceEnumerator.plan(source: source, destination: destination)
+            sourceScan = try? SourceEnumerator.scan(source: source)
+            if destinationAvailable, let sourceScan {
+                plan = CopyPlan(
+                    sourceRoot: source,
+                    destinationRoots: [URL(fileURLWithPath: destinationPath)],
+                    entries: sourceScan.entries)
+            } else {
+                plan = nil
+            }
         } else {
+            sourceScan = nil
             plan = nil
         }
         refreshDiskDescriptors()
@@ -248,9 +259,10 @@ final class AppState {
         guard canStartPro else { return }
         let source = URL(fileURLWithPath: sourcePath)
         let dests = proSettings.destinations.map { URL(fileURLWithPath: $0) }
-        guard let plan = try? SourceEnumerator.plan(
-            source: source, destinations: dests, algorithm: proSettings.algorithm
-        ) else { return }
+        guard let scan = try? SourceEnumerator.scan(source: source) else { return }
+        let plan = CopyPlan(
+            sourceRoot: source, destinationRoots: dests,
+            entries: scan.entries, algorithm: proSettings.algorithm)
         runSession(plan: plan)
     }
 
@@ -290,25 +302,18 @@ final class AppState {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         if report.succeeded {
-            let verified = report.destinations.reduce(0) { $0 + $1.copied.count + $1.verifiedSkipped.count }
             content.title = "kopi: backup verified ✅"
             if report.destinations.count > 1 {
                 content.body = "\(report.destinations.count) destinations verified (\(report.algorithm.displayName)). Safe to eject the card."
             } else {
-                content.body = "\(verified) files verified. Safe to eject the card."
+                content.body = "\(report.totalCopied + report.totalVerifiedSkipped) files verified. Safe to eject the card."
             }
-        } else if let abort = report.abortReason {
+        } else if let abort = report.firstAbortReason {
             content.title = "kopi: backup interrupted"
             content.body = abort.userMessage
         } else {
-            let stopped = report.destinations.compactMap(\.abortReason)
-            let failed = report.destinations.reduce(0) { $0 + $1.failed.count }
             content.title = "kopi: backup finished with errors"
-            if let first = stopped.first {
-                content.body = first.userMessage
-            } else {
-                content.body = "\(failed) file(s) failed verification."
-            }
+            content.body = "\(report.totalFailed) file(s) failed verification."
         }
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)

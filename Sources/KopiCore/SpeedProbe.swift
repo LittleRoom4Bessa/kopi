@@ -37,11 +37,10 @@ public enum SpeedProbe {
 
         // Write phase (buffer is arbitrary data; content is never verified).
         let chunk = Data((0..<chunkSize).map { UInt8(truncatingIfNeeded: $0) })
-        let writeSeconds: Double
         FileManager.default.createFile(atPath: temp.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: temp)
+        let writeSeconds: Double
         do {
-            let handle = try FileHandle(forWritingTo: temp)
-            defer { try? handle.close() }
             writeSeconds = try measure {
                 var written = 0
                 while written < totalBytes {
@@ -51,7 +50,9 @@ public enum SpeedProbe {
                 }
                 try handle.synchronize()
             }
+            try handle.close()
         } catch {
+            try? handle.close()
             throw error
         }
 
@@ -85,11 +86,11 @@ public enum SpeedProbe {
         guard let target = largestRegularFile(under: root) else {
             throw SpeedProbeError.noReadableFile
         }
+        var readTotal = 0
         let seconds = try measure {
             let handle = try FileHandle(forReadingFrom: target)
             defer { try? handle.close() }
             _ = fcntl(handle.fileDescriptor, F_NOCACHE, 1)
-            var readTotal = 0
             while readTotal < maxBytes {
                 if isCancelled() { throw SpeedProbeError.cancelled }
                 let data = try handle.read(upToCount: chunkSize) ?? Data()
@@ -97,7 +98,10 @@ public enum SpeedProbe {
                 readTotal += data.count
             }
         }
-        return ProbeResult(readBytesPerSecond: Double(maxBytes) / max(seconds, .ulpOfOne))
+        // Throughput is computed from bytes actually read — a file smaller
+        // than maxBytes must not inflate the measured speed.
+        guard readTotal > 0 else { throw SpeedProbeError.noReadableFile }
+        return ProbeResult(readBytesPerSecond: Double(readTotal) / max(seconds, .ulpOfOne))
     }
 
     // MARK: - Internals

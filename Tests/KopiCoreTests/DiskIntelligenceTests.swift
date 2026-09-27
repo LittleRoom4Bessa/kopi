@@ -29,6 +29,26 @@ struct DiskIntelligenceTests {
         #expect(d.interfaceSpeedLabel.contains("Gbps"))
     }
 
+    // Spec flagship scenario: SD card in a USB-C reader → type "SD card", bus "USB"
+    @Test func sdCardInUSBReaderClassification() {
+        let d = DiskClassifier.describe(path: URL(fileURLWithPath: "/Volumes/EOS_R5"), raw: RawDiskInfo(
+            volumeName: "EOS_R5", protocolString: "USB", model: "SDXC/MMC Card Reader",
+            totalBytes: 128 << 30, freeBytes: 64 << 30,
+            mediaIdentity: .local("disk4")
+        ))
+        #expect(d.type == .sdCard)
+        #expect(d.bus == .usb)
+    }
+
+    // "SD" inside "SSD" must not trigger card-reader detection
+    @Test func ssdIsNotMisreadAsSDCard() {
+        let d = DiskClassifier.describe(path: URL(fileURLWithPath: "/Volumes/T5"), raw: RawDiskInfo(
+            protocolString: "USB", model: "Portable SSD T5",
+            mediaIdentity: .local("disk5")
+        ))
+        #expect(d.type == .externalSSD)
+    }
+
     @Test func rotationalExternalIsHDD() {
         let d = DiskClassifier.describe(path: URL(fileURLWithPath: "/Volumes/Archive"), raw: RawDiskInfo(
             protocolString: "USB", model: "WDC WD40", rotational: true,

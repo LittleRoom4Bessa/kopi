@@ -1,5 +1,18 @@
 import Foundation
 
+/// Result of scanning a source: filtered entries plus totals, available
+/// before any destination is chosen (pre-copy summary).
+public struct SourceScan: Sendable {
+    public let entries: [CopyPlanEntry]
+    public let totalBytes: Int64
+    public var fileCount: Int { entries.count }
+
+    public init(entries: [CopyPlanEntry]) {
+        self.entries = entries
+        self.totalBytes = entries.reduce(0) { $0 + $1.size }
+    }
+}
+
 /// Enumerates a source directory into a CopyPlan, filtering macOS filesystem junk.
 public enum SourceEnumerator {
 
@@ -10,6 +23,14 @@ public enum SourceEnumerator {
 
     /// Build a copy plan from `source` into one or more destinations, preserving relative structure.
     public static func plan(source: URL, destinations: [URL], algorithm: HashAlgorithm = .md5) throws -> CopyPlan {
+        let scan = try scan(source: source)
+        return CopyPlan(
+            sourceRoot: source, destinationRoots: destinations,
+            entries: scan.entries, algorithm: algorithm)
+    }
+
+    /// Enumerate and filter the source without binding destinations.
+    public static func scan(source: URL) throws -> SourceScan {
         guard let enumerator = FileManager.default.enumerator(
             at: source,
             includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey, .isDirectoryKey],
@@ -47,9 +68,7 @@ public enum SourceEnumerator {
         }
 
         entries.sort { $0.relativePath < $1.relativePath }
-        return CopyPlan(
-            sourceRoot: source, destinationRoots: destinations,
-            entries: entries, algorithm: algorithm)
+        return SourceScan(entries: entries)
     }
 
     /// Single-destination convenience (casual mode).

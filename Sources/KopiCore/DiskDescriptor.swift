@@ -132,7 +132,15 @@ public enum DiskClassifier {
         if bus == .sd { return .sdCard }
         if raw.isInternal { return .internalSSD }
         if raw.rotational == true { return .hdd }
-        if let model = raw.model?.lowercased(), model.contains("ssd") { return .externalSSD }
+        if let model = raw.model?.lowercased() {
+            // SD card in a USB reader: the bus is USB, so identify the card
+            // from the reader model string ("SDXC", "Card Reader", …).
+            // Checked before "ssd" so "SD" inside "SSD" can't false-positive.
+            let looksLikeCardReader = model.contains("sdxc") || model.contains("sdhc")
+                || model.contains("card") || model.hasPrefix("sd ")
+            if looksLikeCardReader { return .sdCard }
+            if model.contains("ssd") { return .externalSSD }
+        }
         // External, non-rotational media we can't further classify: most
         // external flash on USB/TB is SSD-like; NVMe/TB externals certainly are.
         if bus == .nvme || bus == .thunderbolt { return .externalSSD }

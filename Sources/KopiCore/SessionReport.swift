@@ -35,6 +35,15 @@ public struct CopiedFile: Equatable, Sendable {
     public let relativePath: String
     public let hash: String
     public let bytes: Int64
+    /// True when this copy replaced a divergent pre-existing file (surfaced in the UI).
+    public let overwroteExisting: Bool
+
+    public init(relativePath: String, hash: String, bytes: Int64, overwroteExisting: Bool = false) {
+        self.relativePath = relativePath
+        self.hash = hash
+        self.bytes = bytes
+        self.overwroteExisting = overwroteExisting
+    }
 }
 
 public struct VerifiedSkippedFile: Equatable, Sendable {
@@ -79,4 +88,16 @@ public struct SessionReport: Equatable, Sendable {
 
     /// Casual mode convenience.
     public var primaryDestination: DestinationReport? { destinations.first }
+
+    // Aggregates (used by completion UI/notifications).
+    public var totalCopied: Int { destinations.reduce(0) { $0 + $1.copied.count } }
+    public var totalVerifiedSkipped: Int { destinations.reduce(0) { $0 + $1.verifiedSkipped.count } }
+    public var totalFailed: Int { destinations.reduce(0) { $0 + $1.failed.count } }
+    public var totalOverwritten: Int {
+        destinations.reduce(0) { $0 + $1.copied.filter(\.overwroteExisting).count }
+    }
+    /// Session-level abort first, then any destination-level stop.
+    public var firstAbortReason: AbortReason? {
+        abortReason ?? destinations.compactMap(\.abortReason).first
+    }
 }

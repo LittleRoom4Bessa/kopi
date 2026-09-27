@@ -67,7 +67,9 @@ public struct SHA256Hasher: Hasher {
 
 /// xxHash64 via the vendored official C reference implementation (xxHash v0.8.3,
 /// BSD-2-Clause, in Sources/CxxHash — upstream ships no Package.swift).
-public struct XXH64Hasher: Hasher {
+/// A class (not struct) so the heap-allocated XXH64 state has exactly one
+/// owner with a `deinit` — no double-free or leak on copies/early exit.
+public final class XXH64Hasher: Hasher {
     private var state: OpaquePointer?
 
     public init() {
@@ -75,16 +77,21 @@ public struct XXH64Hasher: Hasher {
         XXH64_reset(state, 0)
     }
 
-    public mutating func update(_ bytes: UnsafeRawBufferPointer) {
-        guard let base = bytes.baseAddress, bytes.count > 0 else { return }
+    public func update(_ bytes: UnsafeRawBufferPointer) {
+        guard let state, let base = bytes.baseAddress, bytes.count > 0 else { return }
         XXH64_update(state, base, bytes.count)
     }
 
-    public mutating func finalize() -> String {
+    public func finalize() -> String {
+        guard let state else { return String(repeating: "0", count: 16) }
         let digest = XXH64_digest(state)
         XXH64_freeState(state)
-        state = nil
+        self.state = nil
         return String(format: "%016llx", digest)
+    }
+
+    deinit {
+        if let state { XXH64_freeState(state) }
     }
 }
 
