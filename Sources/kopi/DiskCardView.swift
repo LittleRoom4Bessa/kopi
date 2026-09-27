@@ -56,7 +56,8 @@ struct DiskCardView: View {
             }
             HStack(spacing: 6) {
                 Text(d.interfaceSpeedLabel).font(.caption).foregroundStyle(.secondary)
-                Spacer()
+                    .lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 2)
                 probeControl
             }
 
@@ -77,7 +78,7 @@ struct DiskCardView: View {
             }
         case .done:
             HStack(spacing: 4) {
-                Text(probeLabel).font(.caption)
+                Text(probeLabel).font(.caption).lineLimit(1).truncationMode(.tail)
                 Button("Retest", action: onProbe).controlSize(.mini)
             }
         case .failed(let message):

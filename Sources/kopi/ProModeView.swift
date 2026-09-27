@@ -8,30 +8,26 @@ struct ProModeView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        @Bindable var state = state
-
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                destinationsSection
-                Divider()
-                verificationSection
-                Divider()
-                rulesSection
-                Divider()
-                actionSection
-            }
+        // Wide, flat layout: destinations side-by-side, settings in one row —
+        // everything operable without scrolling.
+        VStack(alignment: .leading, spacing: 12) {
+            destinationsRow
+            verificationSection
+            rulesSection
+            actionSection
         }
-        .frame(maxHeight: 520)
     }
 
-    // MARK: Destinations
+    // MARK: Destinations (side-by-side)
 
-    private var destinationsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var destinationsRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
             Text("3 copies · 2 media · 1 remote")
                 .font(.caption).foregroundStyle(.secondary)
-            ForEach(0..<ProSettings.destinationCount, id: \.self) { slot in
-                DestinationSlotCard(slot: slot)
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(0..<ProSettings.destinationCount, id: \.self) { slot in
+                    DestinationSlotCard(slot: slot)
+                }
             }
         }
     }
