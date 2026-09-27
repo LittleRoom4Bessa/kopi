@@ -1,5 +1,7 @@
 # kopi
 
+[![CI](https://github.com/LittleRoom4Bessa/kopi/actions/workflows/ci.yml/badge.svg)](https://github.com/LittleRoom4Bessa/kopi/actions/workflows/ci.yml)
+
 A DIT-grade offload tool for casual users, living in your macOS menu bar.
 
 Finder copy-paste can't tell you whether your footage actually arrived intact — and professional DIT tools cost ~$1k/year for features most people never touch. kopi sits in between: pick a card, pick a destination, and every byte is proven to match before you format the card.
@@ -32,6 +34,10 @@ The source card is **never** written to. Ever.
 
 - macOS 14 (Sonoma) or later
 - No dependencies beyond the system — the only vendored code is the official xxHash C reference (BSD-2)
+
+## Install
+
+Download `Kopi.zip` from the [latest release](https://github.com/LittleRoom4Bessa/kopi/releases/latest), unzip, and move `Kopi.app` to `/Applications`. The app is ad-hoc signed (no Developer ID), so on first launch use **right-click → Open** to clear Gatekeeper.
 
 ## Build & Run
 

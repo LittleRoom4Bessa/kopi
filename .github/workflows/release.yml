@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Test (gate)
+        run: ./scripts/test.sh
+
+      - name: Build app bundle
+        run: ./scripts/make-app.sh
+
+      - name: Zip app
+        run: ditto -c -k --sequesterRsrc --keepParent .build/Kopi.app Kopi.zip
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}" Kopi.zip
+          --title "kopi ${GITHUB_REF_NAME}"
+          --generate-notes

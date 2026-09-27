@@ -12,6 +12,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# With a full Xcode (CI runners, most dev machines) none of the CLT
+# workarounds are needed — swift-testing is wired up automatically.
+if xcode-select -p | grep -q "Xcode.app"; then
+    exec swift test "$@"
+fi
+
 CLT_FW=/Library/Developer/CommandLineTools/Library/Developer/Frameworks
 LOCAL_FW=.build/test-frameworks
 
