@@ -2,7 +2,8 @@ import KopiCore
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -12,10 +13,15 @@ struct ContentView: View {
             switch state.phase {
             case .idle:
                 idleSection
+                    .transition(.opacity)
             case .running:
-                progressSection
+                ProgressSectionView(progress: state.progress)
+                    .transition(.opacity)
             case .finished(let report):
-                resultSection(report)
+                ResultSectionView(report: report,
+                                  onReveal: state.revealDestination,
+                                  onReset: state.reset)
+                    .transition(.opacity)
             }
 
             Divider()
@@ -27,6 +33,7 @@ struct ContentView: View {
             }
         }
         .padding()
+        .animation(.smooth(duration: 0.2), value: state.phase)
     }
 
     // MARK: Path pickers
@@ -67,40 +74,40 @@ struct ContentView: View {
                 Text("Select source and destination to begin.")
                     .foregroundStyle(.secondary)
             }
-            Button("Start") { state.start() }
-                .buttonStyle(.borderedProminent)
-                .disabled(!state.canStart)
-            Button("Pro Mode…") { state.openProPanel() }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+            HStack {
+                Button("Start") { state.start() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!state.canStart)
+                    .accessibilityHint("Copies and verifies all files to the destination")
+                Button("Pro Mode…") { openWindow(id: "pro") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHint("Opens the 3-2-1 backup panel with three destinations")
+            }
         }
     }
+}
 
-    // MARK: Live progress
+/// Live progress — its own view type so per-file updates only re-evaluate
+/// this subtree, not the whole popover (view-structure guidance).
+private struct ProgressSectionView: View {
+    let progress: CopyProgress?
 
-    private var progressSection: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let progress = state.progress {
-                ProgressView(value: Double(progress.bytesCompleted), total: Double(max(progress.totalBytes, 1)))
+            if let progress {
+                ProgressView(
+                    value: Double(progress.bytesCompleted),
+                    total: Double(max(progress.totalBytes, 1))
+                )
                 Text(progress.currentFile)
                     .font(.caption).lineLimit(1).truncationMode(.middle)
-                Text("\(progress.filesCompleted)/\(progress.totalFiles) files · \(ByteCountFormatter.string(fromByteCount: progress.bytesCompleted, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: progress.totalBytes, countStyle: .file))")
+                Text("\(progress.filesCompleted)/\(progress.totalFiles) files · \(bytes(progress.bytesCompleted)) of \(bytes(progress.totalBytes))")
                     .font(.caption).foregroundStyle(.secondary)
                 // Condensed per-destination summary during pro sessions.
                 if progress.destinations.count > 1 {
                     ForEach(progress.destinations, id: \.root) { dest in
-                        HStack {
-                            Text(dest.root.lastPathComponent).font(.caption2).lineLimit(1)
-                            Spacer()
-                            switch dest.state {
-                            case .active:
-                                Text("\(dest.filesFinished) files").font(.caption2).foregroundStyle(.secondary)
-                            case .done:
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption2)
-                            case .stopped(let reason):
-                                Text(reason.userMessage).font(.caption2).foregroundStyle(.red)
-                            }
-                        }
+                        DestinationProgressRow(progress: dest)
                     }
                 }
             } else {
@@ -110,12 +117,48 @@ struct ContentView: View {
         }
     }
 
-    // MARK: Result
+    private func bytes(_ value: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+    }
+}
 
-    private func resultSection(_ report: SessionReport) -> some View {
+/// One line of condensed per-destination progress (popover and pro panel).
+struct DestinationProgressRow: View {
+    let progress: DestinationProgress
+
+    var body: some View {
+        HStack {
+            Text(progress.root.lastPathComponent).font(.caption2).lineLimit(1)
+            Spacer()
+            switch progress.state {
+            case .active:
+                Text("\(progress.filesFinished) files")
+                    .font(.caption2).foregroundStyle(.secondary)
+            case .done:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green).font(.caption2)
+            case .stopped(let reason):
+                Text(reason.userMessage).font(.caption2).foregroundStyle(.red)
+            }
+            if progress.filesFailed > 0 {
+                Text("\(progress.filesFailed) failed")
+                    .font(.caption2).foregroundStyle(.orange)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Session result — separate invalidation boundary from the running state.
+private struct ResultSectionView: View {
+    let report: SessionReport
+    let onReveal: () -> Void
+    let onReset: () -> Void
+
+    var body: some View {
         // Casual mode always has exactly one destination.
         let dest = report.primaryDestination
-        return VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             if report.succeeded {
                 Label("Backup verified — safe to eject the card.", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
@@ -127,7 +170,7 @@ struct ContentView: View {
                 }
             }
 
-            Text(summaryLine(report)).font(.caption).foregroundStyle(.secondary)
+            Text(summaryLine).font(.caption).foregroundStyle(.secondary)
 
             if let dest, !dest.failed.isEmpty {
                 ScrollView {
@@ -142,23 +185,19 @@ struct ContentView: View {
             }
 
             HStack {
-                Button("Reveal in Finder") { state.revealDestination() }
+                Button("Reveal in Finder", action: onReveal)
                 Spacer()
-                Button("New Session") { state.reset() }
+                Button("New Session", action: onReset)
             }
         }
     }
 
-    private func summaryLine(_ report: SessionReport) -> String {
+    private var summaryLine: String {
         guard let dest = report.primaryDestination else { return "" }
         var parts = ["\(dest.copied.count) copied"]
         if !dest.verifiedSkipped.isEmpty { parts.append("\(dest.verifiedSkipped.count) already verified") }
         if !dest.failed.isEmpty { parts.append("\(dest.failed.count) failed") }
         if let manifest = dest.manifestURL { parts.append("manifest: \(manifest.lastPathComponent)") }
         return parts.joined(separator: " · ")
-    }
-
-    private func abbreviated(_ path: String) -> String {
-        (path as NSString).abbreviatingWithTildeInPath
     }
 }

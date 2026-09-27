@@ -2,14 +2,24 @@ import SwiftUI
 
 @main
 struct KopiApp: App {
-    @StateObject private var state = AppState()
+    @State private var state = AppState()
 
     var body: some Scene {
+        // Primary surface: menu bar popover (design D7).
         MenuBarExtra("kopi", systemImage: "externaldrive.fill.badge.checkmark") {
             ContentView()
-                .environmentObject(state)
+                .environment(state)
                 .frame(width: 360)
         }
         .menuBarExtraStyle(.window)
+
+        // Supplementary singleton window for pro mode; opened on demand via
+        // `openWindow(id: "pro")` and never shows at launch.
+        Window("kopi pro", id: "pro") {
+            ProPanelView()
+                .environment(state)
+        }
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 620, height: 700)
     }
 }

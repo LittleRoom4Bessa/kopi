@@ -54,7 +54,6 @@ struct DiskCardView: View {
                 Text("\(format(free)) free of \(format(total))")
                     .font(.caption).foregroundStyle(.secondary)
             }
-
             HStack(spacing: 6) {
                 Text(d.interfaceSpeedLabel).font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -111,5 +110,7 @@ private struct CapacityBar: View {
             }
         }
         .frame(height: 6)
+        .accessibilityLabel("Disk usage")
+        .accessibilityValue("\(Int(Double(used) / Double(max(total, 1)) * 100)) percent used")
     }
 }

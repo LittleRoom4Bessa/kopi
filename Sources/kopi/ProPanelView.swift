@@ -2,15 +2,17 @@ import KopiCore
 import SwiftUI
 
 /// Pro mode: 3-2-1 ingest — 3 destination folders, hash choice, media rules.
-/// Lives in a detached panel (design D7); closing the panel never stops a
-/// running session — the popover keeps showing condensed progress.
+/// Lives in a `Window` scene (design D7); closing it never stops a running
+/// session — the popover keeps showing condensed progress.
 struct ProPanelView: View {
-    @EnvironmentObject private var state: AppState
+    @Environment(AppState.self) private var state
 
     var body: some View {
+        @Bindable var state = state
+
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                sourceSection
+                SourceSummarySection()
                 Divider()
                 destinationsSection
                 Divider()
@@ -25,30 +27,6 @@ struct ProPanelView: View {
         .frame(minWidth: 560, minHeight: 620)
     }
 
-    // MARK: Source
-
-    private var sourceSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let source = state.sourceDisk {
-                HStack(spacing: 6) {
-                    Image(systemName: "sdcard")
-                    Text(source.volumeName ?? URL(fileURLWithPath: state.sourcePath).lastPathComponent)
-                        .font(.headline)
-                    Text("·")
-                    Text("\(source.type.displayName) · \(source.bus.displayName)")
-                        .foregroundStyle(.secondary)
-                }
-                if let total = source.totalBytes, let free = source.freeBytes {
-                    Text("\(format(total - free)) used of \(format(total))")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            } else {
-                Label("Pick a source in the menu bar popover first.", systemImage: "sdcard")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
     // MARK: Destinations
 
     private var destinationsSection: some View {
@@ -56,17 +34,7 @@ struct ProPanelView: View {
             Text("3 copies · 2 media · 1 remote")
                 .font(.caption).foregroundStyle(.secondary)
             ForEach(0..<ProSettings.destinationCount, id: \.self) { slot in
-                DiskCardView(
-                    title: "Destination \(slot + 1)",
-                    path: state.proSettings.destinations[slot],
-                    available: !state.proSettings.destinations[slot].isEmpty
-                        && FileManager.default.fileExists(atPath: state.proSettings.destinations[slot]),
-                    descriptor: state.proDisks[slot],
-                    probe: state.probeStates["pro\(slot)"] ?? .idle,
-                    probeLabel: (state.probeStates["pro\(slot)"] ?? .idle).doneLabel(isSource: false),
-                    onChoose: { state.pickProDestination(slot: slot) },
-                    onProbe: { state.probeProDestination(slot: slot) }
-                )
+                DestinationSlotCard(slot: slot)
             }
         }
     }
@@ -74,22 +42,18 @@ struct ProPanelView: View {
     // MARK: Verification
 
     private var verificationSection: some View {
-        HStack(alignment: .center, spacing: 16) {
-            Picker("Verify with", selection: Binding(
-                get: { state.proSettings.algorithm },
-                set: { state.proSettings.algorithm = $0 }
-            )) {
+        @Bindable var state = state
+        return HStack(alignment: .center, spacing: 16) {
+            Picker("Verify with", selection: $state.proSettings.algorithm) {
                 ForEach([HashAlgorithm.xxh64, .sha256], id: \.self) { algorithm in
                     Text("\(algorithm.displayName) — \(algorithm.subtitle)").tag(algorithm)
                 }
             }
-            .frame(maxWidth: 280)
+            .pickerStyle(.radioGroup)
+            .accessibilityHint("Hash algorithm used to verify every copied file")
 
-            Toggle("Strict 3-2-1 mode", isOn: Binding(
-                get: { state.proSettings.strictMode },
-                set: { state.proSettings.strictMode = $0 }
-            ))
-            .help("Block Start when media-diversity rules are violated")
+            Toggle("Strict 3-2-1 mode", isOn: $state.proSettings.strictMode)
+                .help("Block Start when media-diversity rules are violated")
         }
     }
 
@@ -124,6 +88,7 @@ struct ProPanelView: View {
                 Button("Start 3-2-1 Backup") { state.startPro() }
                     .buttonStyle(.borderedProminent)
                     .disabled(!state.canStartPro)
+                    .accessibilityHint("Copies the source to all three destinations with verification")
                 if !state.proSlotsFilled {
                     Text("Assign all 3 destinations to start.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -141,7 +106,7 @@ struct ProPanelView: View {
                         total: Double(max(progress.totalBytes, 1))
                     )
                     ForEach(progress.destinations, id: \.root) { dest in
-                        destinationProgressRow(dest)
+                        DestinationProgressRow(progress: dest)
                     }
                 } else {
                     ProgressView()
@@ -150,7 +115,7 @@ struct ProPanelView: View {
 
             case .finished(let report):
                 ForEach(report.destinations, id: \.root) { dest in
-                    destinationResultRow(dest)
+                    DestinationResultRow(report: dest)
                 }
                 if report.succeeded {
                     Label("All destinations verified — safe to eject the card.",
@@ -168,40 +133,74 @@ struct ProPanelView: View {
             }
         }
     }
+}
 
-    private func destinationProgressRow(_ dest: DestinationProgress) -> some View {
-        HStack {
-            Text(dest.root.lastPathComponent).font(.caption).lineLimit(1)
-            Spacer()
-            switch dest.state {
-            case .active:
-                Text("\(dest.filesFinished) files").font(.caption).foregroundStyle(.secondary)
-            case .done:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.caption)
-            case .stopped(let reason):
-                Text(reason.userMessage).font(.caption).foregroundStyle(.red)
-            }
-            if dest.filesFailed > 0 {
-                Text("\(dest.filesFailed) failed").font(.caption).foregroundStyle(.orange)
-            }
-        }
-    }
+/// Source summary shown at the top of the pro panel.
+private struct SourceSummarySection: View {
+    @Environment(AppState.self) private var state
 
-    private func destinationResultRow(_ dest: DestinationReport) -> some View {
-        HStack {
-            Text(dest.root.lastPathComponent).font(.caption).lineLimit(1)
-            Spacer()
-            if let abort = dest.abortReason {
-                Text(abort.userMessage).font(.caption).foregroundStyle(.red)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let source = state.sourceDisk {
+                HStack(spacing: 6) {
+                    Image(systemName: "sdcard")
+                    Text(source.volumeName ?? URL(fileURLWithPath: state.sourcePath).lastPathComponent)
+                        .font(.headline)
+                    Text("·")
+                    Text("\(source.type.displayName) · \(source.bus.displayName)")
+                        .foregroundStyle(.secondary)
+                }
+                if let total = source.totalBytes, let free = source.freeBytes {
+                    Text("\(format(total - free)) used of \(format(total))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             } else {
-                Text("\(dest.copied.count) copied · \(dest.verifiedSkipped.count) verified · \(dest.failed.count) failed")
-                    .font(.caption)
-                    .foregroundStyle(dest.failed.isEmpty ? Color.secondary : Color.orange)
+                Label("Pick a source in the menu bar popover first.", systemImage: "sdcard")
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
     private func format(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+/// One pro destination slot: disk card + chooser + speed probe.
+private struct DestinationSlotCard: View {
+    @Environment(AppState.self) private var state
+    let slot: Int
+
+    var body: some View {
+        DiskCardView(
+            title: "Destination \(slot + 1)",
+            path: state.proSettings.destinations[slot],
+            available: state.proSlotAvailable(slot),
+            descriptor: state.proDisks[slot],
+            probe: state.probeStates["pro\(slot)"] ?? .idle,
+            probeLabel: (state.probeStates["pro\(slot)"] ?? .idle).doneLabel(isSource: false),
+            onChoose: { state.pickProDestination(slot: slot) },
+            onProbe: { state.probeProDestination(slot: slot) }
+        )
+    }
+}
+
+/// One line of per-destination results (pro panel).
+struct DestinationResultRow: View {
+    let report: DestinationReport
+
+    var body: some View {
+        HStack {
+            Text(report.root.lastPathComponent).font(.caption).lineLimit(1)
+            Spacer()
+            if let abort = report.abortReason {
+                Text(abort.userMessage).font(.caption).foregroundStyle(.red)
+            } else {
+                Text("\(report.copied.count) copied · \(report.verifiedSkipped.count) verified · \(report.failed.count) failed")
+                    .font(.caption)
+                    .foregroundStyle(report.failed.isEmpty ? Color.secondary : Color.orange)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }

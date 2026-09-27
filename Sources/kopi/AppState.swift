@@ -10,19 +10,22 @@ enum SessionPhase: Equatable {
     case finished(SessionReport)
 }
 
+/// Single source of truth, observed with fine granularity via @Observable
+/// (macOS 14+; replaces ObservableObject/@Published per state-management guidance).
+@Observable
 @MainActor
-final class AppState: ObservableObject {
+final class AppState {
 
     // MARK: Persisted selections (plain paths; non-sandboxed personal tool)
 
-    @Published var sourcePath: String {
+    var sourcePath: String {
         didSet { UserDefaults.standard.set(sourcePath, forKey: "sourcePath") }
     }
-    @Published var destinationPath: String {
+    var destinationPath: String {
         didSet { UserDefaults.standard.set(destinationPath, forKey: "destinationPath") }
     }
     /// Pro mode: 3 destination folders, hash choice, strict toggle (pro-mode spec).
-    @Published var proSettings: ProSettings {
+    var proSettings: ProSettings {
         didSet {
             if let data = try? JSONEncoder().encode(proSettings) {
                 UserDefaults.standard.set(data, forKey: "proSettings")
@@ -33,9 +36,9 @@ final class AppState: ObservableObject {
 
     // MARK: Session state
 
-    @Published var plan: CopyPlan?
-    @Published var phase: SessionPhase = .idle
-    @Published var progress: CopyProgress?
+    var plan: CopyPlan?
+    var phase: SessionPhase = .idle
+    var progress: CopyProgress?
 
     // MARK: Disk intelligence
 
@@ -46,17 +49,16 @@ final class AppState: ObservableObject {
         case failed(String)
     }
 
-    @Published var sourceDisk: DiskDescriptor?
-    @Published var destinationDisk: DiskDescriptor?
+    var sourceDisk: DiskDescriptor?
+    var destinationDisk: DiskDescriptor?
     /// Keyed "source", "destination", "pro0"…"pro2".
-    @Published var probeStates: [String: ProbeState] = [:]
+    var probeStates: [String: ProbeState] = [:]
     /// Pro mode: one descriptor per destination slot.
-    @Published var proDisks: [DiskDescriptor?] = Array(repeating: nil, count: ProSettings.destinationCount)
-    @Published var proViolations: [RuleViolation] = []
+    var proDisks: [DiskDescriptor?] = Array(repeating: nil, count: ProSettings.destinationCount)
+    var proViolations: [RuleViolation] = []
     private var probeTasks: [String: Task<Void, Never>] = [:]
 
     private var engine = CopyEngine()
-    private var proWindow: NSWindow?
 
     var sourceAvailable: Bool {
         !sourcePath.isEmpty && FileManager.default.fileExists(atPath: sourcePath)
@@ -97,7 +99,7 @@ final class AppState: ObservableObject {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         if panel.runModal() == .OK, let url = panel.url {
             assign(url.path)
             refreshPlan()
@@ -162,6 +164,10 @@ final class AppState: ObservableObject {
         proSettings.destinations.allSatisfy {
             !$0.isEmpty && FileManager.default.fileExists(atPath: $0)
         }
+    }
+    func proSlotAvailable(_ slot: Int) -> Bool {
+        let path = proSettings.destinations[slot]
+        return !path.isEmpty && FileManager.default.fileExists(atPath: path)
     }
     var canStartPro: Bool {
         sourceAvailable && proSlotsFilled && phase != .running
@@ -263,29 +269,6 @@ final class AppState: ObservableObject {
     func reset() {
         phase = .idle
         refreshPlan()
-    }
-
-    // MARK: Pro panel (detached window; closing it never interrupts a session)
-
-    func openProPanel() {
-        if let proWindow {
-            proWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "kopi pro"
-        window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: ProPanelView().environmentObject(self))
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        proWindow = window
     }
 
     // MARK: Completion
